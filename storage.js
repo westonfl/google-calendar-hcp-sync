@@ -1,18 +1,13 @@
-import sqlite3 from "sqlite3";
-import { open } from "sqlite";
+import Database from "better-sqlite3";
 
-let dbPromise;
+let db;
 
-export async function getDb() {
-  if (!dbPromise) {
-    dbPromise = open({
-      filename: "./data.sqlite",
-      driver: sqlite3.Database,
-    });
-    const db = await dbPromise;
-    await db.exec(`
-      PRAGMA journal_mode = WAL;
+export function getDb() {
+  if (!db) {
+    db = new Database("./data.sqlite");
+    db.pragma("journal_mode = WAL");
 
+    db.exec(`
       CREATE TABLE IF NOT EXISTS google_tokens (
         id INTEGER PRIMARY KEY CHECK (id = 1),
         refresh_token TEXT
@@ -37,91 +32,88 @@ export async function getDb() {
       );
     `);
   }
-  return dbPromise;
+  return db;
 }
 
-export async function saveRefreshToken(refreshToken) {
-  const db = await getDb();
-  await db.run(
+export function saveRefreshToken(refreshToken) {
+  const db = getDb();
+  db.prepare(
     `INSERT INTO google_tokens (id, refresh_token)
-     VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET refresh_token=excluded.refresh_token`,
-    [refreshToken]
-  );
+     VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET refresh_token=excluded.refresh_token`
+  ).run(refreshToken);
 }
 
-export async function getRefreshToken() {
-  const db = await getDb();
-  const row = await db.get(
-    `SELECT refresh_token FROM google_tokens WHERE id=1`
-  );
+export function getRefreshToken() {
+  const db = getDb();
+  const row = db
+    .prepare(`SELECT refresh_token FROM google_tokens WHERE id=1`)
+    .get();
   return row?.refresh_token || null;
 }
 
-export async function saveWatchState({
+export function saveWatchState({
   channel_id,
   resource_id,
   expiration,
   next_sync_token,
 }) {
-  const db = await getDb();
-  await db.run(
+  const db = getDb();
+  db.prepare(
     `INSERT INTO google_watch (id, channel_id, resource_id, expiration, next_sync_token)
      VALUES (1, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        channel_id=excluded.channel_id,
        resource_id=excluded.resource_id,
        expiration=excluded.expiration,
-       next_sync_token=excluded.next_sync_token`,
-    [channel_id, resource_id, expiration, next_sync_token]
-  );
+       next_sync_token=excluded.next_sync_token`
+  ).run(channel_id, resource_id, expiration, next_sync_token);
 }
 
-export async function getWatchState() {
-  const db = await getDb();
-  const row = await db.get(
-    `SELECT channel_id, resource_id, expiration, next_sync_token FROM google_watch WHERE id=1`
-  );
+export function getWatchState() {
+  const db = getDb();
+  const row = db
+    .prepare(
+      `SELECT channel_id, resource_id, expiration, next_sync_token FROM google_watch WHERE id=1`
+    )
+    .get();
   return row || {};
 }
 
-export async function saveNextSyncToken(token) {
-  const db = await getDb();
-  await db.run(`UPDATE google_watch SET next_sync_token=? WHERE id=1`, [token]);
+export function saveNextSyncToken(token) {
+  const db = getDb();
+  db.prepare(`UPDATE google_watch SET next_sync_token=? WHERE id=1`).run(token);
 }
 
-export async function putMapping(googleId, hcpId) {
-  const db = await getDb();
-  await db.run(
-    `INSERT OR REPLACE INTO mappings (google_event_id, hcp_job_id) VALUES (?, ?)`,
-    [googleId, hcpId]
-  );
+export function putMapping(googleId, hcpId) {
+  const db = getDb();
+  db.prepare(
+    `INSERT OR REPLACE INTO mappings (google_event_id, hcp_job_id) VALUES (?, ?)`
+  ).run(googleId, hcpId);
 }
 
-export async function getMapping(googleId) {
-  const db = await getDb();
-  const row = await db.get(
-    `SELECT hcp_job_id FROM mappings WHERE google_event_id=?`,
-    [googleId]
-  );
+export function getMapping(googleId) {
+  const db = getDb();
+  const row = db
+    .prepare(`SELECT hcp_job_id FROM mappings WHERE google_event_id=?`)
+    .get(googleId);
   return row?.hcp_job_id || null;
 }
 
-export async function deleteMapping(googleId) {
-  const db = await getDb();
-  await db.run(`DELETE FROM mappings WHERE google_event_id=?`, [googleId]);
+export function deleteMapping(googleId) {
+  const db = getDb();
+  db.prepare(`DELETE FROM mappings WHERE google_event_id=?`).run(googleId);
 }
 
-export async function cacheSet(key, value) {
-  const db = await getDb();
-  await db.run(
+export function cacheSet(key, value) {
+  const db = getDb();
+  db.prepare(
     `INSERT INTO hcp_cache (key, value) VALUES (?, ?)
-     ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
-    [key, value]
-  );
+     ON CONFLICT(key) DO UPDATE SET value=excluded.value`
+  ).run(key, value);
 }
 
-export async function cacheGet(key) {
-  const db = await getDb();
-  const row = await db.get(`SELECT value FROM hcp_cache WHERE key=?`, [key]);
+export function cacheGet(key) {
+  const db = getDb();
+  const row = db.prepare(`SELECT value FROM hcp_cache WHERE key=?`).get(key);
   return row?.value || null;
 }
