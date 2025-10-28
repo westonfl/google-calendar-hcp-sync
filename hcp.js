@@ -21,7 +21,7 @@ export async function resolveCustomerId() {
   const configured = process.env.HCP_CUSTOMER_ID?.trim();
   if (configured) return configured;
 
-  const cached = cacheGet("customer_id");
+  const cached = await cacheGet("customer_id");
   if (cached) return cached;
 
   // Fallback strategy:
@@ -44,7 +44,7 @@ export async function resolveCustomerId() {
       (c) => (c.name || "").toLowerCase().trim() === name.toLowerCase().trim()
     );
     if (found) {
-      cacheSet("customer_id", String(found.id));
+      await cacheSet("customer_id", String(found.id));
       return String(found.id);
     }
     if (!res.data?.next_page) break;

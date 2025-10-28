@@ -39,13 +39,13 @@ export async function exchangeCodeForTokens(code) {
   const oAuth2 = oauth2Client();
   const { tokens } = await oAuth2.getToken(code);
   if (tokens.refresh_token) {
-    saveRefreshToken(tokens.refresh_token);
+    await saveRefreshToken(tokens.refresh_token);
   }
   return tokens;
 }
 
 async function clientWithRefresh() {
-  const refresh = getRefreshToken();
+  const refresh = await getRefreshToken();
   if (!refresh)
     throw new Error("No Google refresh token stored. Authorize first.");
   const oAuth2 = oauth2Client();
@@ -59,7 +59,7 @@ export async function ensureWatchChannel() {
   const calendar = google.calendar({ version: "v3", auth });
 
   // Seed a nextSyncToken if missing
-  let { next_sync_token } = getWatchState();
+  let { next_sync_token } = await getWatchState();
   if (!next_sync_token) {
     const seed = await calendar.events.list({
       calendarId: GOOGLE_CALENDAR_ID,
@@ -69,7 +69,7 @@ export async function ensureWatchChannel() {
     });
     if (seed.data.nextSyncToken) {
       next_sync_token = seed.data.nextSyncToken;
-      saveWatchState({
+      await saveWatchState({
         channel_id: "",
         resource_id: "",
         expiration: "",
@@ -94,7 +94,7 @@ export async function ensureWatchChannel() {
   const resourceId = watch.data?.resourceId || "";
   const expiration = watch.data?.expiration || "";
 
-  saveWatchState({
+  await saveWatchState({
     channel_id: channelId,
     resource_id: resourceId,
     expiration,
@@ -109,7 +109,7 @@ export async function pullChanges(handler) {
   const auth = await clientWithRefresh();
   const calendar = google.calendar({ version: "v3", auth });
 
-  const state = getWatchState();
+  const state = await getWatchState();
   if (!state?.next_sync_token) {
     // As a fallback, reseed a token
     const seed = await calendar.events.list({
@@ -119,7 +119,7 @@ export async function pullChanges(handler) {
       maxResults: 1,
     });
     if (seed.data.nextSyncToken) {
-      saveNextSyncToken(seed.data.nextSyncToken);
+      await saveNextSyncToken(seed.data.nextSyncToken);
       return;
     }
   }
@@ -147,6 +147,6 @@ export async function pullChanges(handler) {
   } while (pageToken);
 
   if (newNextSync) {
-    saveNextSyncToken(newNextSync);
+    await saveNextSyncToken(newNextSync);
   }
 }

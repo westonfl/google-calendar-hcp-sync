@@ -64,14 +64,14 @@ async function handleCalendarEvent(googleEvent) {
     endISO = new Date(startDate.getTime() + 60 * 60000).toISOString();
   }
 
-  const existing = getMapping(evtId);
+  const existing = await getMapping(evtId);
 
   if (status === "cancelled") {
     if (existing) {
       await deleteJob(existing).catch((err) =>
         console.error("deleteJob", err.message)
       );
-      deleteMapping(evtId);
+      await deleteMapping(evtId);
     }
     return;
   }
@@ -99,7 +99,7 @@ async function handleCalendarEvent(googleEvent) {
       throw err;
     });
     if (hcpId) {
-      putMapping(evtId, String(hcpId));
+      await putMapping(evtId, String(hcpId));
     }
   }
 }
