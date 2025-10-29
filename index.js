@@ -22,14 +22,18 @@ app.get("/auth/google", (req, res) => {
 app.get("/oauth2/callback", async (req, res) => {
   try {
     const code = req.query.code;
+    if (!code) {
+      return res.status(400).send("No authorization code received");
+    }
+
     await exchangeCodeForTokens(code);
     await ensureWatchChannel();
     res.send(
       "Google authorized. Watch channel set. You can close this window."
     );
   } catch (e) {
-    console.error(e);
-    res.status(500).send("Auth error");
+    console.error("OAuth callback error:", e.message);
+    res.status(500).send(`Auth error: ${e.message}`);
   }
 });
 

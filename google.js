@@ -13,7 +13,7 @@ const {
   GOOGLE_CLIENT_ID,
   GOOGLE_CLIENT_SECRET,
   GOOGLE_REDIRECT_URI,
-  GOOGLE_CALENDAR_ID,
+  GOOGLE_CALENDAR_ID = "primary", // Default to primary calendar
   BASE_URL,
 } = process.env;
 
@@ -61,20 +61,33 @@ export async function ensureWatchChannel() {
   // Seed a nextSyncToken if missing
   let { next_sync_token } = await getWatchState();
   if (!next_sync_token) {
-    const seed = await calendar.events.list({
-      calendarId: GOOGLE_CALENDAR_ID,
-      singleEvents: true,
-      showDeleted: true,
-      maxResults: 1,
-    });
-    if (seed.data.nextSyncToken) {
-      next_sync_token = seed.data.nextSyncToken;
-      await saveWatchState({
-        channel_id: "",
-        resource_id: "",
-        expiration: "",
-        next_sync_token,
+    try {
+      const seed = await calendar.events.list({
+        calendarId: GOOGLE_CALENDAR_ID,
+        singleEvents: true,
+        showDeleted: true,
+        maxResults: 1,
       });
+      if (seed.data.nextSyncToken) {
+        next_sync_token = seed.data.nextSyncToken;
+        await saveWatchState({
+          channel_id: "",
+          resource_id: "",
+          expiration: "",
+          next_sync_token,
+        });
+      }
+    } catch (error) {
+      console.error(
+        `Error accessing calendar ${GOOGLE_CALENDAR_ID}:`,
+        error.message
+      );
+      if (error.code === 404) {
+        throw new Error(
+          `Calendar '${GOOGLE_CALENDAR_ID}' not found. Please check your GOOGLE_CALENDAR_ID environment variable. Use 'primary' for your main calendar.`
+        );
+      }
+      throw error;
     }
   }
 
@@ -112,15 +125,28 @@ export async function pullChanges(handler) {
   const state = await getWatchState();
   if (!state?.next_sync_token) {
     // As a fallback, reseed a token
-    const seed = await calendar.events.list({
-      calendarId: GOOGLE_CALENDAR_ID,
-      singleEvents: true,
-      showDeleted: true,
-      maxResults: 1,
-    });
-    if (seed.data.nextSyncToken) {
-      await saveNextSyncToken(seed.data.nextSyncToken);
-      return;
+    try {
+      const seed = await calendar.events.list({
+        calendarId: GOOGLE_CALENDAR_ID,
+        singleEvents: true,
+        showDeleted: true,
+        maxResults: 1,
+      });
+      if (seed.data.nextSyncToken) {
+        await saveNextSyncToken(seed.data.nextSyncToken);
+        return;
+      }
+    } catch (error) {
+      console.error(
+        `Error accessing calendar ${GOOGLE_CALENDAR_ID}:`,
+        error.message
+      );
+      if (error.code === 404) {
+        throw new Error(
+          `Calendar '${GOOGLE_CALENDAR_ID}' not found. Please check your GOOGLE_CALENDAR_ID environment variable. Use 'primary' for your main calendar.`
+        );
+      }
+      throw error;
     }
   }
 
