@@ -91,11 +91,12 @@ export async function ensureWatchChannel() {
         });
       }
     } catch (error) {
+      const status = error?.response?.status;
       console.error(
         `Error accessing calendar ${GOOGLE_CALENDAR_ID}:`,
-        error.message
+        status || error?.code || error?.message
       );
-      if (error.code === 404) {
+      if (status === 404 || error?.code === 404) {
         throw new Error(
           `Calendar '${GOOGLE_CALENDAR_ID}' not found. Please check your GOOGLE_CALENDAR_ID environment variable. Use 'primary' for your main calendar.`
         );
@@ -150,11 +151,12 @@ export async function pullChanges(handler) {
         return;
       }
     } catch (error) {
+      const status = error?.response?.status;
       console.error(
         `Error accessing calendar ${GOOGLE_CALENDAR_ID}:`,
-        error.message
+        status || error?.code || error?.message
       );
-      if (error.code === 404) {
+      if (status === 404 || error?.code === 404) {
         throw new Error(
           `Calendar '${GOOGLE_CALENDAR_ID}' not found. Please check your GOOGLE_CALENDAR_ID environment variable. Use 'primary' for your main calendar.`
         );
@@ -178,7 +180,8 @@ export async function pullChanges(handler) {
       });
     } catch (error) {
       // If the calendar or token became invalid (404), reseed a fresh nextSyncToken and exit
-      if (error?.code === 404) {
+      const status = error?.response?.status;
+      if (status === 404 || error?.code === 404) {
         try {
           const seed = await calendar.events.list({
             calendarId: GOOGLE_CALENDAR_ID,
