@@ -87,7 +87,7 @@ export async function ensureWatchChannel() {
           channel_id: "",
           resource_id: "",
           expiration: "",
-          next_sync_token,
+          next_sync_token: next_sync_token ?? null,
         });
       }
     } catch (error) {
@@ -124,7 +124,7 @@ export async function ensureWatchChannel() {
     channel_id: channelId,
     resource_id: resourceId,
     expiration,
-    next_sync_token,
+    next_sync_token: next_sync_token ?? null,
   });
 
   return { channelId, resourceId, expiration };

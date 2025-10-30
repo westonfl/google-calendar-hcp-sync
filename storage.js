@@ -62,7 +62,7 @@ export async function saveRefreshToken(refreshToken) {
   db.run(
     `INSERT INTO google_tokens (id, refresh_token)
      VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET refresh_token=excluded.refresh_token`,
-    [refreshToken]
+    [refreshToken ?? null]
   );
   saveDb();
 }
@@ -88,7 +88,12 @@ export async function saveWatchState({
        resource_id=excluded.resource_id,
        expiration=excluded.expiration,
        next_sync_token=excluded.next_sync_token`,
-    [channel_id, resource_id, expiration, next_sync_token]
+    [
+      channel_id ?? null,
+      resource_id ?? null,
+      expiration ?? null,
+      next_sync_token ?? null,
+    ]
   );
   saveDb();
 }
@@ -108,7 +113,9 @@ export async function getWatchState() {
 
 export async function saveNextSyncToken(token) {
   const db = await getDb();
-  db.run(`UPDATE google_watch SET next_sync_token=? WHERE id=1`, [token]);
+  db.run(`UPDATE google_watch SET next_sync_token=? WHERE id=1`, [
+    token ?? null,
+  ]);
   saveDb();
 }
 
@@ -116,7 +123,7 @@ export async function putMapping(googleId, hcpId) {
   const db = await getDb();
   db.run(
     `INSERT OR REPLACE INTO mappings (google_event_id, hcp_job_id) VALUES (?, ?)`,
-    [googleId, hcpId]
+    [googleId ?? null, hcpId ?? null]
   );
   saveDb();
 }
@@ -132,7 +139,7 @@ export async function getMapping(googleId) {
 
 export async function deleteMapping(googleId) {
   const db = await getDb();
-  db.run(`DELETE FROM mappings WHERE google_event_id=?`, [googleId]);
+  db.run(`DELETE FROM mappings WHERE google_event_id=?`, [googleId ?? null]);
   saveDb();
 }
 
@@ -141,14 +148,16 @@ export async function cacheSet(key, value) {
   db.run(
     `INSERT INTO hcp_cache (key, value) VALUES (?, ?)
      ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
-    [key, value]
+    [key ?? null, value ?? null]
   );
   saveDb();
 }
 
 export async function cacheGet(key) {
   const db = await getDb();
-  const result = db.exec(`SELECT value FROM hcp_cache WHERE key=?`, [key]);
+  const result = db.exec(`SELECT value FROM hcp_cache WHERE key=?`, [
+    key ?? null,
+  ]);
   return result[0]?.values[0]?.[0] || null;
 }
 
