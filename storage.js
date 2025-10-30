@@ -151,3 +151,10 @@ export async function cacheGet(key) {
   const result = db.exec(`SELECT value FROM hcp_cache WHERE key=?`, [key]);
   return result[0]?.values[0]?.[0] || null;
 }
+
+// Utility to clear the stored Google refresh token
+export async function clearRefreshToken() {
+  const db = await getDb();
+  db.run(`DELETE FROM google_tokens WHERE id=1`);
+  saveDb();
+}

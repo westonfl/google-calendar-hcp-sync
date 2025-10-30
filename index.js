@@ -8,7 +8,12 @@ import {
   pullChanges,
 } from "./google.js";
 import { resolveCustomerId, createJob, updateJob, deleteJob } from "./hcp.js";
-import { getMapping, putMapping, deleteMapping } from "./storage.js";
+import {
+  getMapping,
+  putMapping,
+  deleteMapping,
+  clearRefreshToken,
+} from "./storage.js";
 
 const app = express();
 app.use(bodyParser.json());
@@ -32,8 +37,14 @@ app.get("/oauth2/callback", async (req, res) => {
       "Google authorized. Watch channel set. You can close this window."
     );
   } catch (e) {
-    console.error("OAuth callback error:", e.message);
-    res.status(500).send(`Auth error: ${e.message}`);
+    // Log the most useful details we can get
+    const details = {
+      message: e?.message,
+      code: e?.code,
+      response: e?.response?.data,
+    };
+    console.error("OAuth callback error:", details);
+    res.status(500).send(`Auth error: ${details.message || "unknown"}`);
   }
 });
 
@@ -46,7 +57,29 @@ app.post("/webhook/google", async (req, res) => {
   try {
     await pullChanges(handleCalendarEvent);
   } catch (e) {
-    console.error("pullChanges error:", e.message);
+    // Quietly ignore missing authorization to avoid noisy logs until OAuth is completed
+    if (String(e?.message || "").includes("No Google refresh token")) return;
+    console.error("pullChanges error:", e?.message || e);
+  }
+});
+
+// Helper to force a clean OAuth by clearing the stored refresh token
+app.post("/auth/reset", async (_req, res) => {
+  try {
+    await clearRefreshToken();
+    res.send("Refresh token cleared. Visit /auth/google to re-authorize.");
+  } catch (e) {
+    res.status(500).send("Failed to clear token");
+  }
+});
+
+// Also expose GET for convenience (triggerable from browser address bar)
+app.get("/auth/reset", async (_req, res) => {
+  try {
+    await clearRefreshToken();
+    res.send("Refresh token cleared. Visit /auth/google to re-authorize.");
+  } catch (e) {
+    res.status(500).send("Failed to clear token");
   }
 });
 

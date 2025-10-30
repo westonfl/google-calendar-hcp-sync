@@ -37,11 +37,24 @@ export function getAuthUrl() {
 
 export async function exchangeCodeForTokens(code) {
   const oAuth2 = oauth2Client();
-  const { tokens } = await oAuth2.getToken(code);
-  if (tokens.refresh_token) {
-    await saveRefreshToken(tokens.refresh_token);
+  try {
+    const { tokens } = await oAuth2.getToken(code);
+    if (tokens.refresh_token) {
+      await saveRefreshToken(tokens.refresh_token);
+    }
+    return tokens;
+  } catch (e) {
+    // Surface the exact OAuth failure to the caller
+    const details = {
+      message: e?.message,
+      code: e?.code,
+      response: e?.response?.data,
+    };
+    throw Object.assign(
+      new Error(details.message || "OAuth token exchange failed"),
+      details
+    );
   }
-  return tokens;
 }
 
 async function clientWithRefresh() {
