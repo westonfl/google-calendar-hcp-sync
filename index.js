@@ -145,7 +145,19 @@ async function handleCalendarEvent(googleEvent) {
     return;
   }
 
-  const customerId = await resolveCustomerId();
+  let customerId;
+  try {
+    customerId = await resolveCustomerId();
+  } catch (e) {
+    console.error("resolveCustomerId error", {
+      message: e?.message,
+      code: e?.code,
+      status: e?.response?.status,
+      data: e?.response?.data,
+      url: e?.config?.url || e?.response?.config?.url,
+    });
+    return; // skip this event but keep the sync moving
+  }
 
   if (existing) {
     await updateJob(existing, { startISO, endISO, title, description }).catch(

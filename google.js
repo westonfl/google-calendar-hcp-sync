@@ -235,7 +235,19 @@ export async function pullChanges(handler) {
     // Process changes
     const events = res.data.items || [];
     for (const ev of events) {
-      await handler(ev);
+      try {
+        await handler(ev);
+      } catch (e) {
+        console.error("handleCalendarEvent error", {
+          eventId: ev?.id,
+          message: e?.message,
+          code: e?.code,
+          status: e?.response?.status,
+          data: e?.response?.data,
+          url: e?.config?.url || e?.response?.config?.url,
+        });
+        // Continue to next event so that we can still advance the sync token
+      }
     }
 
     pageToken = res.data.nextPageToken || null;
