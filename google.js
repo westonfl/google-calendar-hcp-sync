@@ -38,9 +38,16 @@ export function getAuthUrl() {
 export async function exchangeCodeForTokens(code) {
   const oAuth2 = oauth2Client();
   try {
+    console.log("exchangeCodeForTokens: requesting tokens");
     const { tokens } = await oAuth2.getToken(code);
+    console.log("exchangeCodeForTokens: tokens received", {
+      hasAccessToken: Boolean(tokens.access_token),
+      hasRefreshToken: Boolean(tokens.refresh_token),
+      expiry_date: tokens.expiry_date,
+    });
     if (tokens.refresh_token) {
       await saveRefreshToken(tokens.refresh_token);
+      console.log("exchangeCodeForTokens: refresh token saved");
     }
     return tokens;
   } catch (e) {
@@ -73,6 +80,7 @@ export async function ensureWatchChannel() {
 
   // Seed a nextSyncToken if missing
   let { next_sync_token } = await getWatchState();
+  console.log("ensureWatchChannel: current watch state", { next_sync_token });
   if (!next_sync_token) {
     try {
       const seed = await calendar.events.list({
@@ -83,6 +91,7 @@ export async function ensureWatchChannel() {
       });
       if (seed.data.nextSyncToken) {
         next_sync_token = seed.data.nextSyncToken;
+        console.log("ensureWatchChannel: seeded nextSyncToken");
         await saveWatchState({
           channel_id: "",
           resource_id: "",
@@ -120,6 +129,12 @@ export async function ensureWatchChannel() {
 
   const resourceId = watch.data?.resourceId || "";
   const expiration = watch.data?.expiration || "";
+  console.log("ensureWatchChannel: watch created", {
+    channelId,
+    resourceId,
+    expiration,
+    address,
+  });
 
   await saveWatchState({
     channel_id: channelId,
@@ -127,6 +142,7 @@ export async function ensureWatchChannel() {
     expiration,
     next_sync_token: next_sync_token ?? null,
   });
+  console.log("ensureWatchChannel: watch state saved");
 
   return { channelId, resourceId, expiration };
 }
@@ -137,6 +153,7 @@ export async function pullChanges(handler) {
   const calendar = google.calendar({ version: "v3", auth });
 
   const state = await getWatchState();
+  console.log("pullChanges: loaded state", state);
   if (!state?.next_sync_token) {
     // As a fallback, reseed a token
     try {
@@ -148,6 +165,7 @@ export async function pullChanges(handler) {
       });
       if (seed.data.nextSyncToken) {
         await saveNextSyncToken(seed.data.nextSyncToken);
+        console.log("pullChanges: reseeded nextSyncToken (no state)");
         return;
       }
     } catch (error) {
@@ -178,6 +196,11 @@ export async function pullChanges(handler) {
         syncToken: state.next_sync_token,
         pageToken,
       });
+      console.log("pullChanges: page received", {
+        items: (res.data.items || []).length,
+        nextPageToken: res.data.nextPageToken,
+        nextSyncToken: res.data.nextSyncToken ? "yes" : "no",
+      });
     } catch (error) {
       // If the calendar or token became invalid (404), reseed a fresh nextSyncToken and exit
       const status = error?.response?.status;
@@ -200,6 +223,12 @@ export async function pullChanges(handler) {
           );
         }
       }
+      console.error("pullChanges: events.list failed", {
+        message: error?.message,
+        code: error?.code,
+        status: error?.response?.status,
+        data: error?.response?.data,
+      });
       throw error;
     }
 
@@ -215,5 +244,6 @@ export async function pullChanges(handler) {
 
   if (newNextSync) {
     await saveNextSyncToken(newNextSync);
+    console.log("pullChanges: saved new nextSyncToken");
   }
 }

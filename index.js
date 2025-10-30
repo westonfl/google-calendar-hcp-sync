@@ -54,14 +54,29 @@ app.get("/oauth2/callback", async (req, res) => {
 app.post("/webhook/google", async (req, res) => {
   // Google sends headers. We do not trust body for Calendar push.
   // Always respond quickly, then pull changes using sync tokens.
+  try {
+    console.log("/webhook/google hit:", {
+      xGoogChannelId: req.headers["x-goog-channel-id"],
+      xGoogResourceId: req.headers["x-goog-resource-id"],
+      xGoogResourceState: req.headers["x-goog-resource-state"],
+      xGoogMessageNumber: req.headers["x-goog-message-number"],
+    });
+  } catch {}
   res.sendStatus(200);
 
   try {
+    console.log("pullChanges start");
     await pullChanges(handleCalendarEvent);
+    console.log("pullChanges done");
   } catch (e) {
     // Quietly ignore missing authorization to avoid noisy logs until OAuth is completed
     if (String(e?.message || "").includes("No Google refresh token")) return;
-    console.error("pullChanges error:", e?.message || e);
+    console.error("pullChanges error:", {
+      message: e?.message,
+      code: e?.code,
+      status: e?.response?.status,
+      data: e?.response?.data,
+    });
   }
 });
 
