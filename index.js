@@ -37,13 +37,15 @@ app.get("/oauth2/callback", async (req, res) => {
       "Google authorized. Watch channel set. You can close this window."
     );
   } catch (e) {
-    // Log the most useful details we can get
+    // Log raw error + extracted details for maximum visibility in Render logs
+    console.error("OAuth callback error RAW:", e);
     const details = {
       message: e?.message,
       code: e?.code,
       response: e?.response?.data,
+      queryHasCode: Boolean(req?.query?.code),
     };
-    console.error("OAuth callback error:", details);
+    console.error("OAuth callback error DETAILS:", details);
     res.status(500).send(`Auth error: ${details.message || "unknown"}`);
   }
 });
@@ -81,6 +83,16 @@ app.get("/auth/reset", async (_req, res) => {
   } catch (e) {
     res.status(500).send("Failed to clear token");
   }
+});
+
+// Minimal debug endpoint to confirm runtime config (safe values only)
+app.get("/debug/env", (_req, res) => {
+  res.json({
+    BASE_URL: process.env.BASE_URL,
+    GOOGLE_REDIRECT_URI: process.env.GOOGLE_REDIRECT_URI,
+    GOOGLE_CALENDAR_ID: process.env.GOOGLE_CALENDAR_ID || "primary",
+    NODE_ENV: process.env.NODE_ENV,
+  });
 });
 
 // Handler that maps a single Google event to HCP
