@@ -167,13 +167,38 @@ export async function pullChanges(handler) {
   let newNextSync = null;
 
   do {
-    const res = await calendar.events.list({
-      calendarId: GOOGLE_CALENDAR_ID,
-      singleEvents: true,
-      showDeleted: true,
-      syncToken: state.next_sync_token,
-      pageToken,
-    });
+    let res;
+    try {
+      res = await calendar.events.list({
+        calendarId: GOOGLE_CALENDAR_ID,
+        singleEvents: true,
+        showDeleted: true,
+        syncToken: state.next_sync_token,
+        pageToken,
+      });
+    } catch (error) {
+      // If the calendar or token became invalid (404), reseed a fresh nextSyncToken and exit
+      if (error?.code === 404) {
+        try {
+          const seed = await calendar.events.list({
+            calendarId: GOOGLE_CALENDAR_ID,
+            singleEvents: true,
+            showDeleted: true,
+            maxResults: 1,
+          });
+          if (seed.data.nextSyncToken) {
+            await saveNextSyncToken(seed.data.nextSyncToken);
+            return;
+          }
+        } catch (seedErr) {
+          console.error(
+            "Reseed after 404 failed:",
+            seedErr?.message || seedErr
+          );
+        }
+      }
+      throw error;
+    }
 
     // Process changes
     const events = res.data.items || [];
