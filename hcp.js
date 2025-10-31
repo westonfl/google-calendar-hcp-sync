@@ -67,6 +67,37 @@ export async function resolveCustomerId() {
   );
 }
 
+// Simple rate limiter with exponential backoff for 429 errors
+let lastCallTime = 0;
+const MIN_DELAY_MS = 500; // Minimum 500ms between calls
+
+async function rateLimitedCall(fn) {
+  const now = Date.now();
+  const elapsed = now - lastCallTime;
+  if (elapsed < MIN_DELAY_MS) {
+    await new Promise((r) => setTimeout(r, MIN_DELAY_MS - elapsed));
+  }
+  lastCallTime = Date.now();
+
+  let retries = 3;
+  let delay = 1000;
+  while (retries > 0) {
+    try {
+      return await fn();
+    } catch (e) {
+      if (e?.response?.status === 429 && retries > 0) {
+        console.warn(`HCP rate limited (429), waiting ${delay}ms before retry`);
+        await new Promise((r) => setTimeout(r, delay));
+        delay *= 2; // Exponential backoff
+        retries--;
+      } else {
+        throw e;
+      }
+    }
+  }
+  throw new Error("HCP rate limit exceeded after retries");
+}
+
 export async function createJob({
   customer_id,
   startISO,
@@ -83,7 +114,7 @@ export async function createJob({
     // Add other fields your account allows. Example:
     // job_type: "Service"
   };
-  const res = await api.post(`/jobs`, payload);
+  const res = await rateLimitedCall(() => api.post(`/jobs`, payload));
   return res.data?.id || res.data?.job?.id || res.data?.data?.id;
 }
 
@@ -97,11 +128,11 @@ export async function updateJob(
     scheduled_end: endISO,
     description: description || title || "Calendar job",
   };
-  await api.patch(`/jobs/${hcpJobId}`, payload);
+  await rateLimitedCall(() => api.patch(`/jobs/${hcpJobId}`, payload));
 }
 
 export async function deleteJob(hcpJobId) {
   const api = hcp();
   // Some HCP tenants prefer marking canceled instead of deleting. If delete is not allowed, replace with a status update.
-  await api.delete(`/jobs/${hcpJobId}`);
+  await rateLimitedCall(() => api.delete(`/jobs/${hcpJobId}`));
 }

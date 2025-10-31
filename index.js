@@ -50,19 +50,43 @@ app.get("/oauth2/callback", async (req, res) => {
   }
 });
 
+// Webhook deduplication: track processed message numbers to avoid duplicate processing
+const processedMessages = new Set();
+const MAX_MESSAGE_HISTORY = 1000;
+
 // 3) Webhook for Google notifications
 app.post("/webhook/google", async (req, res) => {
   // Google sends headers. We do not trust body for Calendar push.
   // Always respond quickly, then pull changes using sync tokens.
+  const msgNum = req.headers["x-goog-message-number"];
+  const channelId = req.headers["x-goog-channel-id"];
+
   try {
     console.log("/webhook/google hit:", {
-      xGoogChannelId: req.headers["x-goog-channel-id"],
+      xGoogChannelId: channelId,
       xGoogResourceId: req.headers["x-goog-resource-id"],
       xGoogResourceState: req.headers["x-goog-resource-state"],
-      xGoogMessageNumber: req.headers["x-goog-message-number"],
+      xGoogMessageNumber: msgNum,
     });
   } catch {}
+
+  // Respond immediately to Google
   res.sendStatus(200);
+
+  // Deduplicate: if we've already processed this message number recently, skip
+  if (msgNum && processedMessages.has(msgNum)) {
+    console.log(`Skipping duplicate webhook message ${msgNum}`);
+    return;
+  }
+
+  if (msgNum) {
+    processedMessages.add(msgNum);
+    // Keep history bounded
+    if (processedMessages.size > MAX_MESSAGE_HISTORY) {
+      const first = processedMessages.values().next().value;
+      processedMessages.delete(first);
+    }
+  }
 
   try {
     console.log("pullChanges start");
