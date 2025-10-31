@@ -37,17 +37,28 @@ export async function resolveCustomerId() {
 
   while (page <= MAX_PAGES) {
     const res = await api.get(`/customers`, {
-      params: { page, per_page: 100 },
+      params: { page, page_size: 100 },
     });
-    const list = Array.isArray(res.data?.data) ? res.data.data : res.data;
-    const found = list?.find(
-      (c) => (c.name || "").toLowerCase().trim() === name.toLowerCase().trim()
-    );
+    const list = Array.isArray(res.data?.customers)
+      ? res.data.customers
+      : Array.isArray(res.data)
+      ? res.data
+      : [];
+    const target = name.toLowerCase().trim();
+    const found = list.find((c) => {
+      const full = `${c.first_name || ""} ${c.last_name || ""}`
+        .trim()
+        .toLowerCase();
+      const single = (c.name || "").toLowerCase().trim();
+      const company = (c.company_name || "").toLowerCase().trim();
+      return full === target || single === target || company === target;
+    });
     if (found) {
       await cacheSet("customer_id", String(found.id));
       return String(found.id);
     }
-    if (!res.data?.next_page) break;
+    const totalPages = Number(res.data?.total_pages) || page;
+    if (page >= totalPages) break;
     page++;
   }
 
