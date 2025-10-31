@@ -134,109 +134,126 @@ app.get("/debug/env", (_req, res) => {
   });
 });
 
+// In-memory lock to prevent concurrent processing of the same event
+const processingLocks = new Map();
+
 // Handler that maps a single Google event to HCP
 async function handleCalendarEvent(googleEvent) {
   // googleEvent.status can be "cancelled"
   const evtId = googleEvent.id;
   const status = googleEvent.status;
 
-  // Basic normalization
-  const title = googleEvent.summary || "Calendar job";
-  const description = googleEvent.description || "";
-  const startISO = googleEvent.start?.dateTime || googleEvent.start?.date;
-  let endISO = googleEvent.end?.dateTime || googleEvent.end?.date;
-
-  // If no end provided, default to +60 minutes
-  if (!endISO && startISO && startISO.length > 10) {
-    const startDate = new Date(startISO);
-    endISO = new Date(startDate.getTime() + 60 * 60000).toISOString();
-  }
-
-  const existing = await getMapping(evtId);
-
-  if (status === "cancelled") {
-    if (existing) {
-      await deleteJob(existing).catch((err) =>
-        console.error("deleteJob", err.message)
-      );
-      await deleteMapping(evtId);
-    }
+  // Acquire lock for this event - skip if already processing
+  if (processingLocks.has(evtId)) {
+    console.log(`Skipping event ${evtId} - already processing`);
     return;
   }
 
-  if (!startISO || !endISO) {
-    console.warn("Event missing start or end, skipping", evtId);
-    return;
-  }
+  processingLocks.set(evtId, true);
 
-  let customerId;
   try {
-    customerId = await resolveCustomerId();
-  } catch (e) {
-    console.error("resolveCustomerId error", {
-      message: e?.message,
-      code: e?.code,
-      status: e?.response?.status,
-      data: e?.response?.data,
-      url: e?.config?.url || e?.response?.config?.url,
-    });
-    return; // skip this event but keep the sync moving
-  }
+    // Basic normalization
+    const title = googleEvent.summary || "Calendar job";
+    const description = googleEvent.description || "";
+    const startISO = googleEvent.start?.dateTime || googleEvent.start?.date;
+    let endISO = googleEvent.end?.dateTime || googleEvent.end?.date;
 
-  if (existing) {
-    // Try to update existing job
-    try {
-      await updateJob(existing, { startISO, endISO, title, description });
-    } catch (err) {
-      // If update fails with 404, the job doesn't exist in HCP (deleted or never created)
-      // Recreate it and update the mapping
-      if (err?.response?.status === 404) {
-        console.warn(
-          `Job ${existing} not found in HCP (404), recreating for event ${evtId}`
+    // If no end provided, default to +60 minutes
+    if (!endISO && startISO && startISO.length > 10) {
+      const startDate = new Date(startISO);
+      endISO = new Date(startDate.getTime() + 60 * 60000).toISOString();
+    }
+
+    // Double-check mapping after acquiring lock (in case another handler just created it)
+    const existing = await getMapping(evtId);
+
+    if (status === "cancelled") {
+      if (existing) {
+        await deleteJob(existing).catch((err) =>
+          console.error("deleteJob", err.message)
         );
-        try {
-          const hcpId = await createJob({
-            customer_id: customerId,
-            startISO,
-            endISO,
-            title,
-            description,
-          });
-          if (hcpId) {
-            await putMapping(evtId, String(hcpId));
-            console.log(`Recreated job ${hcpId} for event ${evtId}`);
+        await deleteMapping(evtId);
+      }
+      return;
+    }
+
+    if (!startISO || !endISO) {
+      console.warn("Event missing start or end, skipping", evtId);
+      return;
+    }
+
+    let customerId;
+    try {
+      customerId = await resolveCustomerId();
+    } catch (e) {
+      console.error("resolveCustomerId error", {
+        message: e?.message,
+        code: e?.code,
+        status: e?.response?.status,
+        data: e?.response?.data,
+        url: e?.config?.url || e?.response?.config?.url,
+      });
+      return; // skip this event but keep the sync moving
+    }
+
+    if (existing) {
+      // Try to update existing job
+      try {
+        await updateJob(existing, { startISO, endISO, title, description });
+      } catch (err) {
+        // If update fails with 404, the job doesn't exist in HCP (deleted or never created)
+        // Recreate it and update the mapping
+        if (err?.response?.status === 404) {
+          console.warn(
+            `Job ${existing} not found in HCP (404), recreating for event ${evtId}`
+          );
+          try {
+            const hcpId = await createJob({
+              customer_id: customerId,
+              startISO,
+              endISO,
+              title,
+              description,
+            });
+            if (hcpId) {
+              await putMapping(evtId, String(hcpId));
+              console.log(`Recreated job ${hcpId} for event ${evtId}`);
+            }
+          } catch (createErr) {
+            console.error(
+              "createJob (recovery) failed:",
+              createErr?.response?.data || createErr?.message
+            );
           }
-        } catch (createErr) {
+        } else {
           console.error(
-            "createJob (recovery) failed:",
-            createErr?.response?.data || createErr?.message
+            "updateJob error:",
+            err?.response?.status || err?.message
           );
         }
-      } else {
-        console.error(
-          "updateJob error:",
-          err?.response?.status || err?.message
-        );
+      }
+    } else {
+      // Create new job
+      try {
+        const hcpId = await createJob({
+          customer_id: customerId,
+          startISO,
+          endISO,
+          title,
+          description,
+        });
+        if (hcpId) {
+          await putMapping(evtId, String(hcpId));
+          console.log(`Created job ${hcpId} for event ${evtId}`);
+        }
+      } catch (err) {
+        console.error("createJob error:", err?.response?.data || err?.message);
+        // Don't throw - allow sync to continue with next event
       }
     }
-  } else {
-    // Create new job
-    try {
-      const hcpId = await createJob({
-        customer_id: customerId,
-        startISO,
-        endISO,
-        title,
-        description,
-      });
-      if (hcpId) {
-        await putMapping(evtId, String(hcpId));
-        console.log(`Created job ${hcpId} for event ${evtId}`);
-      }
-    } catch (err) {
-      console.error("createJob error:", err?.response?.data || err?.message);
-      // Don't throw - allow sync to continue with next event
-    }
+  } finally {
+    // Release lock after processing completes
+    processingLocks.delete(evtId);
   }
 }
 

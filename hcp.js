@@ -69,7 +69,7 @@ export async function resolveCustomerId() {
 
 // Simple rate limiter with exponential backoff for 429 errors
 let lastCallTime = 0;
-const MIN_DELAY_MS = 500; // Minimum 500ms between calls
+const MIN_DELAY_MS = 2000; // Minimum 2 seconds between calls to avoid rate limiting
 
 async function rateLimitedCall(fn) {
   const now = Date.now();
