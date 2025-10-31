@@ -184,22 +184,58 @@ async function handleCalendarEvent(googleEvent) {
   }
 
   if (existing) {
-    await updateJob(existing, { startISO, endISO, title, description }).catch(
-      (err) => console.error("updateJob", err.message)
-    );
+    // Try to update existing job
+    try {
+      await updateJob(existing, { startISO, endISO, title, description });
+    } catch (err) {
+      // If update fails with 404, the job doesn't exist in HCP (deleted or never created)
+      // Recreate it and update the mapping
+      if (err?.response?.status === 404) {
+        console.warn(
+          `Job ${existing} not found in HCP (404), recreating for event ${evtId}`
+        );
+        try {
+          const hcpId = await createJob({
+            customer_id: customerId,
+            startISO,
+            endISO,
+            title,
+            description,
+          });
+          if (hcpId) {
+            await putMapping(evtId, String(hcpId));
+            console.log(`Recreated job ${hcpId} for event ${evtId}`);
+          }
+        } catch (createErr) {
+          console.error(
+            "createJob (recovery) failed:",
+            createErr?.response?.data || createErr?.message
+          );
+        }
+      } else {
+        console.error(
+          "updateJob error:",
+          err?.response?.status || err?.message
+        );
+      }
+    }
   } else {
-    const hcpId = await createJob({
-      customer_id: customerId,
-      startISO,
-      endISO,
-      title,
-      description,
-    }).catch((err) => {
-      console.error("createJob", err.response?.data || err.message);
-      throw err;
-    });
-    if (hcpId) {
-      await putMapping(evtId, String(hcpId));
+    // Create new job
+    try {
+      const hcpId = await createJob({
+        customer_id: customerId,
+        startISO,
+        endISO,
+        title,
+        description,
+      });
+      if (hcpId) {
+        await putMapping(evtId, String(hcpId));
+        console.log(`Created job ${hcpId} for event ${evtId}`);
+      }
+    } catch (err) {
+      console.error("createJob error:", err?.response?.data || err?.message);
+      // Don't throw - allow sync to continue with next event
     }
   }
 }
