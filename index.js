@@ -169,9 +169,23 @@ async function handleCalendarEvent(googleEvent) {
 
     if (status === "cancelled") {
       if (existing) {
-        await deleteJob(existing).catch((err) =>
-          console.error("deleteJob", err.message)
-        );
+        try {
+          await deleteJob(existing);
+          console.log(`Deleted job ${existing} for cancelled event ${evtId}`);
+        } catch (err) {
+          // If job doesn't exist (404), that's fine - just clear the mapping
+          if (err?.response?.status === 404) {
+            console.warn(
+              `Job ${existing} not found in HCP (404) - clearing mapping for event ${evtId}`
+            );
+          } else {
+            console.error(
+              "deleteJob error:",
+              err?.response?.status || err?.message
+            );
+          }
+        }
+        // Always clear the mapping, even if delete failed
         await deleteMapping(evtId);
       }
       return;
@@ -200,13 +214,16 @@ async function handleCalendarEvent(googleEvent) {
       // Try to update existing job
       try {
         await updateJob(existing, { startISO, endISO, title, description });
+        console.log(`Updated job ${existing} for event ${evtId}`);
       } catch (err) {
         // If update fails with 404, the job doesn't exist in HCP (deleted or never created)
-        // Recreate it and update the mapping
+        // Clear the stale mapping first, then recreate the job
         if (err?.response?.status === 404) {
           console.warn(
-            `Job ${existing} not found in HCP (404), recreating for event ${evtId}`
+            `Job ${existing} not found in HCP (404), clearing stale mapping and recreating for event ${evtId}`
           );
+          // Clear the stale mapping before recreating
+          await deleteMapping(evtId);
           try {
             const hcpId = await createJob({
               customer_id: customerId,
@@ -218,6 +235,10 @@ async function handleCalendarEvent(googleEvent) {
             if (hcpId) {
               await putMapping(evtId, String(hcpId));
               console.log(`Recreated job ${hcpId} for event ${evtId}`);
+            } else {
+              console.error(
+                `createJob (recovery) returned no ID for event ${evtId}`
+              );
             }
           } catch (createErr) {
             console.error(
@@ -245,6 +266,12 @@ async function handleCalendarEvent(googleEvent) {
         if (hcpId) {
           await putMapping(evtId, String(hcpId));
           console.log(`Created job ${hcpId} for event ${evtId}`);
+        } else {
+          console.error(
+            `createJob returned no ID for event ${evtId} - mapping not saved`
+          );
+          // Job might have been created but we couldn't extract the ID
+          // Check response structure in logs
         }
       } catch (err) {
         console.error("createJob error:", err?.response?.data || err?.message);

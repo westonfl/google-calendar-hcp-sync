@@ -115,7 +115,33 @@ export async function createJob({
     // job_type: "Service"
   };
   const res = await rateLimitedCall(() => api.post(`/jobs`, payload));
-  return res.data?.id || res.data?.job?.id || res.data?.data?.id;
+
+  // Try multiple possible response structures
+  const jobId =
+    res.data?.id ||
+    res.data?.job?.id ||
+    res.data?.job_id ||
+    res.data?.data?.id ||
+    res.data?.job_id ||
+    (res.data?.job && typeof res.data.job === "object" && res.data.job.id) ||
+    null;
+
+  // Always log the response structure for debugging
+  console.log("createJob response:", {
+    status: res.status,
+    hasId: !!jobId,
+    jobId: jobId,
+    dataKeys: Object.keys(res.data || {}),
+    sampleData: JSON.stringify(res.data).substring(0, 300),
+  });
+
+  if (!jobId) {
+    console.error(
+      "createJob: Could not extract job ID from response - check logs above"
+    );
+  }
+
+  return jobId;
 }
 
 export async function updateJob(
@@ -123,16 +149,51 @@ export async function updateJob(
   { startISO, endISO, title, description }
 ) {
   const api = hcp();
+  // Strip job_ prefix if present - HCP endpoints may expect just the ID
+  const jobIdForApi = hcpJobId?.startsWith("job_")
+    ? hcpJobId.replace(/^job_/, "")
+    : hcpJobId;
   const payload = {
     scheduled_start: startISO,
     scheduled_end: endISO,
     description: description || title || "Calendar job",
   };
-  await rateLimitedCall(() => api.patch(`/jobs/${hcpJobId}`, payload));
+  console.log(
+    `updateJob: attempting to update job ${hcpJobId} (using ${jobIdForApi} for API)`
+  );
+  try {
+    await rateLimitedCall(() => api.patch(`/jobs/${jobIdForApi}`, payload));
+    console.log(`updateJob: successfully updated job ${jobIdForApi}`);
+  } catch (err) {
+    console.error(`updateJob: failed for job ${jobIdForApi}:`, {
+      status: err?.response?.status,
+      data: err?.response?.data,
+      url: `/jobs/${jobIdForApi}`,
+      originalId: hcpJobId,
+    });
+    throw err;
+  }
 }
 
 export async function deleteJob(hcpJobId) {
   const api = hcp();
-  // Some HCP tenants prefer marking canceled instead of deleting. If delete is not allowed, replace with a status update.
-  await rateLimitedCall(() => api.delete(`/jobs/${hcpJobId}`));
+  // Strip job_ prefix if present - HCP endpoints may expect just the ID
+  const jobIdForApi = hcpJobId?.startsWith("job_")
+    ? hcpJobId.replace(/^job_/, "")
+    : hcpJobId;
+  console.log(
+    `deleteJob: attempting to delete job ${hcpJobId} (using ${jobIdForApi} for API)`
+  );
+  try {
+    await rateLimitedCall(() => api.delete(`/jobs/${jobIdForApi}`));
+    console.log(`deleteJob: successfully deleted job ${jobIdForApi}`);
+  } catch (err) {
+    console.error(`deleteJob: failed for job ${jobIdForApi}:`, {
+      status: err?.response?.status,
+      data: err?.response?.data,
+      url: `/jobs/${jobIdForApi}`,
+      originalId: hcpJobId,
+    });
+    throw err;
+  }
 }
