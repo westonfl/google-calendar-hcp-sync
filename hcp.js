@@ -149,27 +149,21 @@ export async function updateJob(
   { startISO, endISO, title, description }
 ) {
   const api = hcp();
-  // Strip job_ prefix if present - HCP endpoints may expect just the ID
-  const jobIdForApi = hcpJobId?.startsWith("job_")
-    ? hcpJobId.replace(/^job_/, "")
-    : hcpJobId;
+  // HCP expects the full job ID with job_ prefix in the URL
   const payload = {
     scheduled_start: startISO,
     scheduled_end: endISO,
     description: description || title || "Calendar job",
   };
-  console.log(
-    `updateJob: attempting to update job ${hcpJobId} (using ${jobIdForApi} for API)`
-  );
+  console.log(`updateJob: attempting to update job ${hcpJobId}`);
   try {
-    await rateLimitedCall(() => api.patch(`/jobs/${jobIdForApi}`, payload));
-    console.log(`updateJob: successfully updated job ${jobIdForApi}`);
+    await rateLimitedCall(() => api.patch(`/jobs/${hcpJobId}`, payload));
+    console.log(`updateJob: successfully updated job ${hcpJobId}`);
   } catch (err) {
-    console.error(`updateJob: failed for job ${jobIdForApi}:`, {
+    console.error(`updateJob: failed for job ${hcpJobId}:`, {
       status: err?.response?.status,
       data: err?.response?.data,
-      url: `/jobs/${jobIdForApi}`,
-      originalId: hcpJobId,
+      url: `/jobs/${hcpJobId}`,
     });
     throw err;
   }
@@ -177,22 +171,16 @@ export async function updateJob(
 
 export async function deleteJob(hcpJobId) {
   const api = hcp();
-  // Strip job_ prefix if present - HCP endpoints may expect just the ID
-  const jobIdForApi = hcpJobId?.startsWith("job_")
-    ? hcpJobId.replace(/^job_/, "")
-    : hcpJobId;
-  console.log(
-    `deleteJob: attempting to delete job ${hcpJobId} (using ${jobIdForApi} for API)`
-  );
+  // HCP expects the full job ID with job_ prefix in the URL
+  console.log(`deleteJob: attempting to delete job ${hcpJobId}`);
   try {
-    await rateLimitedCall(() => api.delete(`/jobs/${jobIdForApi}`));
-    console.log(`deleteJob: successfully deleted job ${jobIdForApi}`);
+    await rateLimitedCall(() => api.delete(`/jobs/${hcpJobId}`));
+    console.log(`deleteJob: successfully deleted job ${hcpJobId}`);
   } catch (err) {
-    console.error(`deleteJob: failed for job ${jobIdForApi}:`, {
+    console.error(`deleteJob: failed for job ${hcpJobId}:`, {
       status: err?.response?.status,
       data: err?.response?.data,
-      url: `/jobs/${jobIdForApi}`,
-      originalId: hcpJobId,
+      url: `/jobs/${hcpJobId}`,
     });
     throw err;
   }
