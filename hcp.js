@@ -152,20 +152,54 @@ export async function createJob({
     (!res.data?.schedule || !res.data?.schedule?.scheduled_start)
   ) {
     console.log(
-      `createJob: Schedule not set in response, setting via schedule endpoint for job ${jobId}`
+      `createJob: Schedule not set in response, setting via schedule endpoint for job ${jobId}`,
+      { startISO, endISO }
     );
+
+    // HCP schedule endpoint might require full ISO datetime strings, not date-only
+    // If date-only format (YYYY-MM-DD), convert to full datetime
+    let scheduleStart = startISO;
+    let scheduleEnd = endISO;
+
+    if (startISO && startISO.length === 10) {
+      // Date-only format - convert to start of day in ISO format
+      scheduleStart = new Date(startISO + "T00:00:00").toISOString();
+      console.log(
+        `createJob: Converted date-only startISO ${startISO} to ${scheduleStart}`
+      );
+    }
+
+    if (endISO && endISO.length === 10) {
+      // Date-only format - convert to end of day in ISO format
+      scheduleEnd = new Date(endISO + "T23:59:59").toISOString();
+      console.log(
+        `createJob: Converted date-only endISO ${endISO} to ${scheduleEnd}`
+      );
+    }
+
+    const schedulePayload = {
+      scheduled_start: scheduleStart,
+      scheduled_end: scheduleEnd,
+    };
+
+    console.log(
+      `createJob: Attempting to set schedule with payload:`,
+      schedulePayload
+    );
+
     try {
       await rateLimitedCall(() =>
-        api.put(`/jobs/${jobId}/schedule`, {
-          scheduled_start: startISO,
-          scheduled_end: endISO,
-        })
+        api.put(`/jobs/${jobId}/schedule`, schedulePayload)
       );
       console.log(`createJob: Schedule set successfully for job ${jobId}`);
     } catch (scheduleErr) {
       console.error(`createJob: Failed to set schedule for job ${jobId}:`, {
         status: scheduleErr?.response?.status,
         data: scheduleErr?.response?.data,
+        url: `/jobs/${jobId}/schedule`,
+        payload: schedulePayload,
+        startISO_original: startISO,
+        endISO_original: endISO,
       });
       // Don't fail the whole operation - job was created, just schedule might not be visible
     }
