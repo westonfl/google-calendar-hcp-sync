@@ -177,9 +177,10 @@ export async function createJob({
       );
     }
 
+    // HCP schedule endpoint expects start_time and end_time (not scheduled_start/scheduled_end)
     const schedulePayload = {
-      scheduled_start: scheduleStart,
-      scheduled_end: scheduleEnd,
+      start_time: scheduleStart,
+      end_time: scheduleEnd,
     };
 
     console.log(
@@ -215,9 +216,10 @@ export async function updateJob(
   const api = hcp();
   // HCP doesn't have a direct "update job" endpoint
   // Use "Update job schedule" endpoint instead: PUT /jobs/{id}/schedule
+  // HCP expects start_time and end_time (not scheduled_start/scheduled_end)
   const payload = {
-    scheduled_start: startISO,
-    scheduled_end: endISO,
+    start_time: startISO,
+    end_time: endISO,
     // Note: description/title updates may not be supported via schedule endpoint
   };
   console.log(`updateJob: attempting to update schedule for job ${hcpJobId}`);
