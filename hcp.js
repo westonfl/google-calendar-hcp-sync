@@ -133,12 +133,42 @@ export async function createJob({
     jobId: jobId,
     dataKeys: Object.keys(res.data || {}),
     sampleData: JSON.stringify(res.data).substring(0, 300),
+    schedule: res.data?.schedule || null,
+    hasSchedule: !!res.data?.schedule,
   });
 
   if (!jobId) {
     console.error(
       "createJob: Could not extract job ID from response - check logs above"
     );
+    return null;
+  }
+
+  // Check if schedule was set - if not, set it explicitly via schedule endpoint
+  // HCP may require schedule to be set separately for jobs to appear on calendar
+  if (
+    startISO &&
+    endISO &&
+    (!res.data?.schedule || !res.data?.schedule?.scheduled_start)
+  ) {
+    console.log(
+      `createJob: Schedule not set in response, setting via schedule endpoint for job ${jobId}`
+    );
+    try {
+      await rateLimitedCall(() =>
+        api.put(`/jobs/${jobId}/schedule`, {
+          scheduled_start: startISO,
+          scheduled_end: endISO,
+        })
+      );
+      console.log(`createJob: Schedule set successfully for job ${jobId}`);
+    } catch (scheduleErr) {
+      console.error(`createJob: Failed to set schedule for job ${jobId}:`, {
+        status: scheduleErr?.response?.status,
+        data: scheduleErr?.response?.data,
+      });
+      // Don't fail the whole operation - job was created, just schedule might not be visible
+    }
   }
 
   return jobId;
@@ -149,21 +179,22 @@ export async function updateJob(
   { startISO, endISO, title, description }
 ) {
   const api = hcp();
-  // HCP expects the full job ID with job_ prefix in the URL
+  // HCP doesn't have a direct "update job" endpoint
+  // Use "Update job schedule" endpoint instead: PUT /jobs/{id}/schedule
   const payload = {
     scheduled_start: startISO,
     scheduled_end: endISO,
-    description: description || title || "Calendar job",
+    // Note: description/title updates may not be supported via schedule endpoint
   };
-  console.log(`updateJob: attempting to update job ${hcpJobId}`);
+  console.log(`updateJob: attempting to update schedule for job ${hcpJobId}`);
   try {
-    await rateLimitedCall(() => api.patch(`/jobs/${hcpJobId}`, payload));
-    console.log(`updateJob: successfully updated job ${hcpJobId}`);
+    await rateLimitedCall(() => api.put(`/jobs/${hcpJobId}/schedule`, payload));
+    console.log(`updateJob: successfully updated schedule for job ${hcpJobId}`);
   } catch (err) {
     console.error(`updateJob: failed for job ${hcpJobId}:`, {
       status: err?.response?.status,
       data: err?.response?.data,
-      url: `/jobs/${hcpJobId}`,
+      url: `/jobs/${hcpJobId}/schedule`,
     });
     throw err;
   }
@@ -171,17 +202,25 @@ export async function updateJob(
 
 export async function deleteJob(hcpJobId) {
   const api = hcp();
-  // HCP expects the full job ID with job_ prefix in the URL
-  console.log(`deleteJob: attempting to delete job ${hcpJobId}`);
+  // HCP API doesn't have a "Delete Job" endpoint according to docs
+  // Jobs can't be deleted via API - they may need to be cancelled/deleted in the UI
+  // Or there might be a "Delete job schedule" endpoint to remove the schedule
+  console.log(`deleteJob: attempting to delete schedule for job ${hcpJobId}`);
   try {
-    await rateLimitedCall(() => api.delete(`/jobs/${hcpJobId}`));
-    console.log(`deleteJob: successfully deleted job ${hcpJobId}`);
+    // Try "Delete job schedule" endpoint if it exists: DELETE /jobs/{id}/schedule
+    await rateLimitedCall(() => api.delete(`/jobs/${hcpJobId}/schedule`));
+    console.log(`deleteJob: successfully deleted schedule for job ${hcpJobId}`);
   } catch (err) {
-    console.error(`deleteJob: failed for job ${hcpJobId}:`, {
-      status: err?.response?.status,
-      data: err?.response?.data,
-      url: `/jobs/${hcpJobId}`,
-    });
-    throw err;
+    // If schedule delete fails, job deletion isn't supported via API
+    console.warn(
+      `deleteJob: cannot delete job ${hcpJobId} via API - HCP doesn't support job deletion. Error:`,
+      {
+        status: err?.response?.status,
+        data: err?.response?.data,
+        url: `/jobs/${hcpJobId}/schedule`,
+      }
+    );
+    // Don't throw - just log warning since deletion isn't supported
+    // The mapping will still be cleared in index.js
   }
 }
