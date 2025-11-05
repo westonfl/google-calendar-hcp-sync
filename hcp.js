@@ -67,6 +67,75 @@ export async function resolveCustomerId() {
   );
 }
 
+// Resolve HCP employee ID by email address
+// Since each tech uses the same email for Google Calendar and HCP,
+// we can match the calendar owner's email to the HCP employee email
+export async function resolveEmployeeIdByEmail(email) {
+  if (!email) return null;
+
+  const normalizedEmail = email.toLowerCase().trim();
+
+  // Check cache first (key format: employee_email_<email>)
+  const cacheKey = `employee_email_${normalizedEmail}`;
+  const cached = await cacheGet(cacheKey);
+  if (cached) return cached;
+
+  // Query HCP employees API to find employee by email
+  const api = hcp();
+  let page = 1;
+  const MAX_PAGES = 5;
+
+  while (page <= MAX_PAGES) {
+    try {
+      const res = await rateLimitedCall(() =>
+        api.get(`/employees`, {
+          params: { page, page_size: 100 },
+        })
+      );
+
+      // HCP API response structure might be similar to customers
+      // Try both structures: res.data.employees or res.data
+      const list = Array.isArray(res.data?.employees)
+        ? res.data.employees
+        : Array.isArray(res.data)
+        ? res.data
+        : [];
+
+      // Find employee by email (case-insensitive)
+      const found = list.find((emp) => {
+        const empEmail = (emp.email || "").toLowerCase().trim();
+        return empEmail === normalizedEmail;
+      });
+
+      if (found) {
+        const employeeId = String(found.id);
+        await cacheSet(cacheKey, employeeId);
+        return employeeId;
+      }
+
+      // Check if there are more pages
+      const totalPages = Number(res.data?.total_pages) || page;
+      if (page >= totalPages) break;
+      page++;
+    } catch (e) {
+      // If employees endpoint doesn't exist or returns error, log and return null
+      console.error("resolveEmployeeIdByEmail error:", {
+        email: normalizedEmail,
+        message: e?.message,
+        status: e?.response?.status,
+        data: e?.response?.data,
+      });
+      return null;
+    }
+  }
+
+  // Employee not found - return null (don't throw, allow fallback to default)
+  console.warn(
+    `Could not resolve HCP employee_id for email "${normalizedEmail}". Employee may not exist in HCP or email doesn't match.`
+  );
+  return null;
+}
+
 // Simple rate limiter with exponential backoff for 429 errors
 let lastCallTime = 0;
 const MIN_DELAY_MS = 2000; // Minimum 2 seconds between calls to avoid rate limiting
@@ -104,6 +173,8 @@ export async function createJob({
   endISO,
   title,
   description,
+  notes,
+  assignedEmployeeId,
 }) {
   const api = hcp();
   const payload = {
@@ -111,6 +182,7 @@ export async function createJob({
     scheduled_start: startISO,
     scheduled_end: endISO,
     description: description || title || "Calendar job",
+    notes: notes || description || title || "Calendar job", // Add notes field (title + description)
     // Add other fields your account allows. Example:
     // job_type: "Service"
   };
@@ -126,16 +198,16 @@ export async function createJob({
     (res.data?.job && typeof res.data.job === "object" && res.data.job.id) ||
     null;
 
-  // Always log the response structure for debugging
-  console.log("createJob response:", {
-    status: res.status,
-    hasId: !!jobId,
-    jobId: jobId,
-    dataKeys: Object.keys(res.data || {}),
-    sampleData: JSON.stringify(res.data).substring(0, 300),
-    schedule: res.data?.schedule || null,
-    hasSchedule: !!res.data?.schedule,
-  });
+  // Log response structure only for debugging (very verbose)
+  // console.log("createJob response:", {
+  //   status: res.status,
+  //   hasId: !!jobId,
+  //   jobId: jobId,
+  //   dataKeys: Object.keys(res.data || {}),
+  //   sampleData: JSON.stringify(res.data).substring(0, 300),
+  //   schedule: res.data?.schedule || null,
+  //   hasSchedule: !!res.data?.schedule,
+  // });
 
   if (!jobId) {
     console.error(
@@ -151,10 +223,7 @@ export async function createJob({
     endISO &&
     (!res.data?.schedule || !res.data?.schedule?.scheduled_start)
   ) {
-    console.log(
-      `createJob: Schedule not set in response, setting via schedule endpoint for job ${jobId}`,
-      { startISO, endISO }
-    );
+    // Silently set schedule if not set in response
 
     // HCP schedule endpoint might require full ISO datetime strings, not date-only
     // If date-only format (YYYY-MM-DD), convert to full datetime
@@ -164,35 +233,36 @@ export async function createJob({
     if (startISO && startISO.length === 10) {
       // Date-only format - convert to start of day in ISO format
       scheduleStart = new Date(startISO + "T00:00:00").toISOString();
-      console.log(
-        `createJob: Converted date-only startISO ${startISO} to ${scheduleStart}`
-      );
+      // Silently convert date-only format
     }
 
     if (endISO && endISO.length === 10) {
       // Date-only format - convert to end of day in ISO format
       scheduleEnd = new Date(endISO + "T23:59:59").toISOString();
-      console.log(
-        `createJob: Converted date-only endISO ${endISO} to ${scheduleEnd}`
-      );
+      // Silently convert date-only format
     }
 
     // HCP schedule endpoint expects start_time and end_time (not scheduled_start/scheduled_end)
+    // Also supports assigned_employees or dispatched_employees for technician assignment
     const schedulePayload = {
       start_time: scheduleStart,
       end_time: scheduleEnd,
     };
 
-    console.log(
-      `createJob: Attempting to set schedule with payload:`,
-      schedulePayload
-    );
+    // Add employee assignment if provided
+    if (assignedEmployeeId) {
+      schedulePayload.dispatched_employees = [
+        { employee_id: assignedEmployeeId },
+      ];
+    }
+
+    // Silently set schedule
 
     try {
       await rateLimitedCall(() =>
         api.put(`/jobs/${jobId}/schedule`, schedulePayload)
       );
-      console.log(`createJob: Schedule set successfully for job ${jobId}`);
+      // Schedule set successfully (silent)
     } catch (scheduleErr) {
       console.error(`createJob: Failed to set schedule for job ${jobId}:`, {
         status: scheduleErr?.response?.status,
@@ -211,7 +281,7 @@ export async function createJob({
 
 export async function updateJob(
   hcpJobId,
-  { startISO, endISO, title, description }
+  { startISO, endISO, title, description, notes, assignedEmployeeId }
 ) {
   const api = hcp();
   // HCP doesn't have a direct "update job" endpoint
@@ -220,12 +290,16 @@ export async function updateJob(
   const payload = {
     start_time: startISO,
     end_time: endISO,
-    // Note: description/title updates may not be supported via schedule endpoint
+    // Note: description/title/notes updates may not be supported via schedule endpoint
   };
-  console.log(`updateJob: attempting to update schedule for job ${hcpJobId}`);
+
+  // Add employee assignment if provided
+  if (assignedEmployeeId) {
+    payload.dispatched_employees = [{ employee_id: assignedEmployeeId }];
+  }
   try {
     await rateLimitedCall(() => api.put(`/jobs/${hcpJobId}/schedule`, payload));
-    console.log(`updateJob: successfully updated schedule for job ${hcpJobId}`);
+    // Update successful (logged in index.js)
   } catch (err) {
     console.error(`updateJob: failed for job ${hcpJobId}:`, {
       status: err?.response?.status,
@@ -241,11 +315,10 @@ export async function deleteJob(hcpJobId) {
   // HCP API doesn't have a "Delete Job" endpoint according to docs
   // Jobs can't be deleted via API - they may need to be cancelled/deleted in the UI
   // Or there might be a "Delete job schedule" endpoint to remove the schedule
-  console.log(`deleteJob: attempting to delete schedule for job ${hcpJobId}`);
   try {
     // Try "Delete job schedule" endpoint if it exists: DELETE /jobs/{id}/schedule
     await rateLimitedCall(() => api.delete(`/jobs/${hcpJobId}/schedule`));
-    console.log(`deleteJob: successfully deleted schedule for job ${hcpJobId}`);
+    // Delete successful (logged in index.js)
   } catch (err) {
     // If schedule delete fails, job deletion isn't supported via API
     console.warn(

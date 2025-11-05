@@ -7,7 +7,13 @@ import {
   ensureWatchChannel,
   pullChanges,
 } from "./google.js";
-import { resolveCustomerId, createJob, updateJob, deleteJob } from "./hcp.js";
+import {
+  resolveCustomerId,
+  resolveEmployeeIdByEmail,
+  createJob,
+  updateJob,
+  deleteJob,
+} from "./hcp.js";
 import {
   getMapping,
   putMapping,
@@ -61,21 +67,22 @@ app.post("/webhook/google", async (req, res) => {
   const msgNum = req.headers["x-goog-message-number"];
   const channelId = req.headers["x-goog-channel-id"];
 
-  try {
-    console.log("/webhook/google hit:", {
-      xGoogChannelId: channelId,
-      xGoogResourceId: req.headers["x-goog-resource-id"],
-      xGoogResourceState: req.headers["x-goog-resource-state"],
-      xGoogMessageNumber: msgNum,
-    });
-  } catch {}
+  // Log webhook hits only for debugging (can be removed in production)
+  // try {
+  //   console.log("/webhook/google hit:", {
+  //     xGoogChannelId: channelId,
+  //     xGoogResourceId: req.headers["x-goog-resource-id"],
+  //     xGoogResourceState: req.headers["x-goog-resource-state"],
+  //     xGoogMessageNumber: msgNum,
+  //   });
+  // } catch {}
 
   // Respond immediately to Google
   res.sendStatus(200);
 
   // Deduplicate: if we've already processed this message number recently, skip
   if (msgNum && processedMessages.has(msgNum)) {
-    console.log(`Skipping duplicate webhook message ${msgNum}`);
+    // Silently skip duplicates
     return;
   }
 
@@ -89,9 +96,8 @@ app.post("/webhook/google", async (req, res) => {
   }
 
   try {
-    console.log("pullChanges start");
     await pullChanges(handleCalendarEvent);
-    console.log("pullChanges done");
+    // Only log errors, not normal operations
   } catch (e) {
     // Quietly ignore missing authorization to avoid noisy logs until OAuth is completed
     if (String(e?.message || "").includes("No Google refresh token")) return;
@@ -145,7 +151,7 @@ async function handleCalendarEvent(googleEvent) {
 
   // Acquire lock for this event - skip if already processing
   if (processingLocks.has(evtId)) {
-    console.log(`Skipping event ${evtId} - already processing`);
+    // Silently skip if already processing
     return;
   }
 
@@ -157,6 +163,46 @@ async function handleCalendarEvent(googleEvent) {
     const description = googleEvent.description || "";
     const startISO = googleEvent.start?.dateTime || googleEvent.start?.date;
     let endISO = googleEvent.end?.dateTime || googleEvent.end?.date;
+
+    // Extract employee ID from calendar event
+    // Since each tech uses the same email for Google Calendar and HCP,
+    // we match the calendar owner's email (organizer.email) to HCP employee email
+    // Priority order:
+    // 1. Calendar owner's email (googleEvent.organizer.email) - query HCP employees API
+    // 2. Environment variable HCP_DEFAULT_EMPLOYEE_ID (fallback if no match found)
+    let assignedEmployeeId = null;
+
+    // First, try to get employee ID from calendar owner's email
+    const organizerEmail = googleEvent.organizer?.email;
+    if (organizerEmail) {
+      try {
+        assignedEmployeeId = await resolveEmployeeIdByEmail(organizerEmail);
+        if (assignedEmployeeId) {
+          console.log(
+            `Matched calendar owner ${organizerEmail} to HCP employee ${assignedEmployeeId}`
+          );
+        }
+      } catch (e) {
+        console.error("Failed to resolve employee ID by email:", {
+          email: organizerEmail,
+          error: e?.message,
+        });
+      }
+    }
+
+    // Fall back to environment variable if no match found
+    if (!assignedEmployeeId) {
+      assignedEmployeeId = process.env.HCP_DEFAULT_EMPLOYEE_ID?.trim() || null;
+      if (assignedEmployeeId) {
+        console.log(
+          `Using default employee ID ${assignedEmployeeId} from environment variable`
+        );
+      }
+    }
+
+    // Combine title and description for job notes (as requested by Ben)
+    const jobNotes =
+      [title, description].filter(Boolean).join("\n\n") || "Calendar job";
 
     // If no end provided, default to +60 minutes
     if (!endISO && startISO && startISO.length > 10) {
@@ -213,7 +259,14 @@ async function handleCalendarEvent(googleEvent) {
     if (existing) {
       // Try to update existing job
       try {
-        await updateJob(existing, { startISO, endISO, title, description });
+        await updateJob(existing, {
+          startISO,
+          endISO,
+          title,
+          description,
+          notes: jobNotes,
+          assignedEmployeeId,
+        });
         console.log(`Updated job ${existing} for event ${evtId}`);
       } catch (err) {
         // If update fails with 404, the job doesn't exist in HCP (deleted or never created)
@@ -231,6 +284,8 @@ async function handleCalendarEvent(googleEvent) {
               endISO,
               title,
               description,
+              notes: jobNotes,
+              assignedEmployeeId,
             });
             if (hcpId) {
               await putMapping(evtId, String(hcpId));
@@ -262,6 +317,8 @@ async function handleCalendarEvent(googleEvent) {
           endISO,
           title,
           description,
+          notes: jobNotes,
+          assignedEmployeeId,
         });
         if (hcpId) {
           await putMapping(evtId, String(hcpId));
