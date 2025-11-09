@@ -15,6 +15,91 @@ function hcp() {
   });
 }
 
+// Find or create the "GOOGLE CALENDAR EVENT" customer
+// All calendar events should use this customer with first_name="GOOGLE" and last_name="CALENDAR EVENT"
+export async function resolveGoogleCalendarCustomerId() {
+  const cacheKey = "google_calendar_customer_id";
+  const cached = await cacheGet(cacheKey);
+  if (cached) return cached;
+
+  const api = hcp();
+  const firstName = "GOOGLE";
+  const lastName = "CALENDAR EVENT";
+
+  // First, try to find existing customer
+  let page = 1;
+  const MAX_PAGES = 5;
+
+  while (page <= MAX_PAGES) {
+    try {
+      const res = await rateLimitedCall(() =>
+        api.get(`/customers`, {
+          params: { page, page_size: 100 },
+        })
+      );
+
+      const list = Array.isArray(res.data?.customers)
+        ? res.data.customers
+        : Array.isArray(res.data)
+        ? res.data
+        : [];
+
+      const found = list.find((c) => {
+        const cFirst = (c.first_name || "").trim().toUpperCase();
+        const cLast = (c.last_name || "").trim().toUpperCase();
+        return cFirst === firstName && cLast === lastName;
+      });
+
+      if (found) {
+        const customerId = String(found.id);
+        await cacheSet(cacheKey, customerId);
+        return customerId;
+      }
+
+      const totalPages = Number(res.data?.total_pages) || page;
+      if (page >= totalPages) break;
+      page++;
+    } catch (e) {
+      console.error("Error searching for GOOGLE CALENDAR EVENT customer:", {
+        message: e?.message,
+        status: e?.response?.status,
+      });
+      break;
+    }
+  }
+
+  // If not found, try to create it
+  try {
+    const createRes = await rateLimitedCall(() =>
+      api.post(`/customers`, {
+        first_name: firstName,
+        last_name: lastName,
+      })
+    );
+
+    const customerId =
+      createRes.data?.id ||
+      createRes.data?.customer?.id ||
+      createRes.data?.customer_id ||
+      null;
+
+    if (customerId) {
+      await cacheSet(cacheKey, String(customerId));
+      return String(customerId);
+    }
+  } catch (createErr) {
+    console.error("Error creating GOOGLE CALENDAR EVENT customer:", {
+      message: createErr?.message,
+      status: createErr?.response?.status,
+      data: createErr?.response?.data,
+    });
+  }
+
+  throw new Error(
+    `Could not find or create GOOGLE CALENDAR EVENT customer. Please create it manually in HCP.`
+  );
+}
+
 // Optional helper in case you do not know customer_id.
 // If HCP supports a search endpoint, use it. If not, ask Ben for the id.
 export async function resolveCustomerId() {

@@ -7,7 +7,13 @@ import {
   ensureWatchChannel,
   pullChanges,
 } from "./google.js";
-import { resolveCustomerId, createJob, updateJob, deleteJob } from "./hcp.js";
+import {
+  resolveGoogleCalendarCustomerId,
+  resolveEmployeeIdByEmail,
+  createJob,
+  updateJob,
+  deleteJob,
+} from "./hcp.js";
 import {
   getMapping,
   putMapping,
@@ -158,9 +164,40 @@ async function handleCalendarEvent(googleEvent) {
     const startISO = googleEvent.start?.dateTime || googleEvent.start?.date;
     let endISO = googleEvent.end?.dateTime || googleEvent.end?.date;
 
-    // Use default employee ID from environment variable if set
-    const assignedEmployeeId =
-      process.env.HCP_DEFAULT_EMPLOYEE_ID?.trim() || null;
+    // Extract employee ID from calendar event organizer email
+    // Map calendar owner's email (organizer.email) to HCP employee email
+    // Priority order:
+    // 1. Calendar owner's email (googleEvent.organizer.email) - query HCP employees API
+    // 2. Environment variable HCP_DEFAULT_EMPLOYEE_ID (fallback if no match found)
+    let assignedEmployeeId = null;
+
+    // First, try to get employee ID from calendar owner's email
+    const organizerEmail = googleEvent.organizer?.email;
+    if (organizerEmail) {
+      try {
+        assignedEmployeeId = await resolveEmployeeIdByEmail(organizerEmail);
+        if (assignedEmployeeId) {
+          console.log(
+            `Matched calendar owner ${organizerEmail} to HCP employee ${assignedEmployeeId}`
+          );
+        }
+      } catch (e) {
+        console.error("Failed to resolve employee ID by email:", {
+          email: organizerEmail,
+          error: e?.message,
+        });
+      }
+    }
+
+    // Fall back to environment variable if no match found
+    if (!assignedEmployeeId) {
+      assignedEmployeeId = process.env.HCP_DEFAULT_EMPLOYEE_ID?.trim() || null;
+      if (assignedEmployeeId) {
+        console.log(
+          `Using default employee ID ${assignedEmployeeId} from environment variable`
+        );
+      }
+    }
 
     // Combine title and description for job notes (as requested by Ben)
     const jobNotes =
@@ -206,9 +243,9 @@ async function handleCalendarEvent(googleEvent) {
 
     let customerId;
     try {
-      customerId = await resolveCustomerId();
+      customerId = await resolveGoogleCalendarCustomerId();
     } catch (e) {
-      console.error("resolveCustomerId error", {
+      console.error("resolveGoogleCalendarCustomerId error", {
         message: e?.message,
         code: e?.code,
         status: e?.response?.status,
